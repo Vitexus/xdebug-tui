@@ -924,7 +924,7 @@ impl App {
     }
 
     fn focus_current_channel(&mut self) {
-        if let Some(c) = self.channels.channel_by_offset(self.session_view.eval_state.channel) { self.focus_channel(c.name.clone(), true) }
+        if let Some(c) = self.channels.channel_by_offset(self.session_view.eval_state.channel) { self.focus_channel(c.name.clone(), false) }
     }
 
     fn focus_channel(&mut self, channel: String, blink: bool) {
