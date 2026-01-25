@@ -47,6 +47,8 @@ impl Theme {
                 syntax_literal_string: Style::default().fg(Solarized::Green.to_color()),
                 syntax_label: Style::default().fg(Solarized::Base00.to_color()),
                 syntax_brace: Style::default().fg(Solarized::Base01.to_color()),
+                notification_debug: Style::default().fg(Solarized::Base01.to_color()),
+                notification_notice: Style::default().fg(Solarized::Cyan.to_color()),
                 notification_info: Style::default().fg(Solarized::Green.to_color()),
                 notification_error: Style::default().fg(Solarized::Red.to_color()),
                 notification_warning: Style::default().fg(Solarized::Yellow.to_color()),
@@ -68,6 +70,9 @@ impl Theme {
 
                 background: Style::default().bg(Color::Black),
                 cursor: Style::default().bg(Color::White),
+                tab_active: Style::default().fg(Solarized::Base2.to_color()).bg(Solarized::Base03.to_color()),
+                tab_inactive: Style::default().fg(Solarized::Base01.to_color()),
+                tab_blink: Style::default().bg(Solarized::Base0.to_color()),
             },
             Theme::Dark => Scheme {
                 syntax_variable: Style::default().fg(Color::LightBlue),
@@ -78,6 +83,8 @@ impl Theme {
                 syntax_label: Style::default().fg(Color::White),
                 syntax_brace: Style::default().fg(Color::White),
 
+                notification_debug: Style::default().fg(Color::DarkGray).bg(Color::Green),
+                notification_notice: Style::default().fg(Color::Cyan).bg(Color::Green),
                 notification_info: Style::default().fg(Color::Black).bg(Color::Green),
                 notification_error: Style::default().fg(Color::Yellow),
                 notification_warning: Style::default().fg(Color::White).bg(Color::Yellow),
@@ -99,7 +106,11 @@ impl Theme {
                 widget_mode_history: Style::default().bg(Color::Red),
                 text_input: Style::default().fg(Solarized::Red.to_color()).bg(Solarized::Green.to_color()),
                 background: Style::default().bg(Color::Black),
-                cursor: Style::default().bg(Color::White)
+                cursor: Style::default().bg(Color::White),
+
+                tab_active: Style::default().fg(Color::Green),
+                tab_inactive: Style::default(),
+                tab_blink: Style::default().bg(Color::Red),
             },
         }
     }
@@ -116,6 +127,8 @@ pub struct Scheme {
     pub syntax_brace: Style,
 
     pub notification_info: Style,
+    pub notification_debug: Style,
+    pub notification_notice: Style,
     pub notification_error: Style,
     pub notification_warning: Style,
 
@@ -136,6 +149,9 @@ pub struct Scheme {
     pub widget_mode_history: Style,
     pub text_input: Style,
     pub cursor: Style,
+    pub tab_active: Style,
+    pub tab_inactive: Style,
+    pub tab_blink: Style,
 }
 
 pub enum Role {}

@@ -1,35 +1,58 @@
 use std::time::Duration;
 use std::time::SystemTime;
 
+pub struct Notifications {
+    notifications: Vec<Notification>,
+}
+
+impl Notifications {
+    pub fn notify(&mut self, notification: Notification) {
+        self.notifications.push(notification);
+    }
+
+    pub fn tick(&mut self) {
+        let notifcations: Vec<Notification> = self.notifications.drain(..).filter(|n|n.is_visible()).collect();
+        self.notifications = notifcations;
+    }
+
+    pub fn current(&self) -> &Vec<Notification> {
+        &self.notifications
+    }
+
+
+    pub(crate) fn new() -> Self {
+        Self {
+            notifications: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum NotificationLevel {
     Error,
+    Debug,
     None,
     Info,
     Warning,
+    Notice,
 }
+
+#[derive(Debug)]
 pub struct Notification {
     pub message: String,
     pub level: NotificationLevel,
     expires: SystemTime,
 }
 impl Notification {
-    const DURATION: u64 = 5;
+    const DURATION: u64 = 2;
     const BLOCKS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-
-    pub(crate) fn none() -> Notification {
-        Notification {
-            message: "".to_string(),
-            level: NotificationLevel::None,
-            expires: SystemTime::now(),
-        }
-    }
 
     pub(crate) fn error(message: String) -> Self {
         Notification {
             message,
             level: NotificationLevel::Error,
             expires: SystemTime::now()
-                .checked_add(Duration::from_secs(5))
+                .checked_add(Duration::from_secs(Self::DURATION))
                 .unwrap(),
         }
     }
@@ -65,6 +88,16 @@ impl Notification {
         Notification {
             message,
             level: NotificationLevel::Warning,
+            expires: SystemTime::now()
+                .checked_add(Duration::from_secs(Self::DURATION))
+                .unwrap(),
+        }
+    }
+
+    pub(crate) fn notice(message: String) -> Notification {
+        Notification {
+            message,
+            level: NotificationLevel::Notice,
             expires: SystemTime::now()
                 .checked_add(Duration::from_secs(Self::DURATION))
                 .unwrap(),

@@ -21,9 +21,9 @@ impl View for HelpView {
         }
     }
 
-    fn draw(_app: &App, frame: &mut Frame, area: Rect) {
+    fn draw(_app: &App, frame: &mut Frame, inner_area: Rect, _area: Rect) {
 
-        frame.render_widget(Paragraph::new(help()), area);
+        frame.render_widget(Paragraph::new(help()), inner_area);
 
     }
 }
@@ -35,6 +35,7 @@ Help for you - press any key to return.
 Key mappings (prefix with number to repeat):
 
 [r]     run
+[R]     restart php script (if provided)
 [n]     next / step into
 [N]     step over
 [p]     previous (switches to history mode if in current mode)
@@ -52,7 +53,7 @@ Key mappings (prefix with number to repeat):
 [+]     increase context depth
 [-]     decrease context depth
 [t]     rotate the theme
-[f]     Filter (context pane) - use dot notation to filter on multiple levels.
+[f]     Filter the context - use dot notation to filter on multiple levels.
 [enter] toggle pane focus (full screen)
 
 Legend:

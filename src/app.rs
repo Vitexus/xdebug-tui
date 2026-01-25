@@ -1,6 +1,7 @@
 use crate::analyzer::Analyser;
 use crate::analyzer::Analysis;
 use crate::analyzer::VariableRef;
+use crate::channel::Channels;
 use crate::config::Config;
 use crate::dbgp::client::ContextGetResponse;
 use crate::dbgp::client::ContinuationResponse;
@@ -10,8 +11,12 @@ use crate::dbgp::client::EvalResponse;
 use crate::dbgp::client::Property;
 use crate::event::input::AppEvent;
 use crate::notification::Notification;
+use crate::notification::Notifications;
+use crate::php_process;
+use crate::php_process::ProcessEvent;
 use crate::theme::Scheme;
 use crate::theme::Theme;
+use crate::view::eval::draw_properties;
 use crate::view::eval::EvalDialog;
 use crate::view::help::HelpView;
 use crate::view::layout::LayoutView;
@@ -23,6 +28,7 @@ use crate::view::View;
 use crate::workspace::Workspace;
 use anyhow::Result;
 use crossterm::event::KeyCode;
+use crossterm::event::KeyModifiers;
 use log::error;
 use log::info;
 use log::warn;
@@ -34,6 +40,8 @@ use ratatui::widgets::Block;
 use ratatui::widgets::Padding;
 use ratatui::widgets::Paragraph;
 use ratatui::Terminal;
+use tokio::sync::mpsc;
+use tokio::task::AbortHandle;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::io;
@@ -128,6 +136,7 @@ impl HistoryEntry {
         match entry {
             Some(e) => e.source.clone(),
             None => SourceContext::default(),
+
         }
     }
 
@@ -234,8 +243,9 @@ pub struct App {
     quit: bool,
     sender: Sender<AppEvent>,
 
+    pub channels: Channels,
     pub listening_status: ListenStatus,
-    pub notification: Notification,
+    pub notifications: Notifications,
     pub config: Config,
 
     pub server_status: Option<ContinuationStatus>,
@@ -262,24 +272,32 @@ pub struct App {
     pub analyzed_files: AnalyzedFiles,
 
     pub stack_max_context_fetch: u16,
+
+    pub run_abort: Option<AbortHandle>,
+    php_tx: Sender<ProcessEvent>,
 }
 
 impl App {
     pub fn new(config: Config, receiver: Receiver<AppEvent>, sender: Sender<AppEvent>) -> App {
         let client = Arc::new(Mutex::new(DbgpClient::new(None)));
+        let (php_tx, php_rx) = mpsc::channel::<ProcessEvent>(1024);
+        php_process::process_manager_start(php_rx, sender.clone());
         App {
             tick: 0,
             listening_status: ListenStatus::Listening,
             config,
             input_plurality: vec![],
-            notification: Notification::none(),
+            notifications: Notifications::new(),
             receiver,
             sender: sender.clone(),
+            run_abort: None,
+            php_tx,
             quit: false,
             history: History::default(),
             document_variables: DocumentVariables::default(),
             client: Arc::clone(&client),
             workspace: Workspace::new(Arc::clone(&client)),
+            channels: Channels::new(),
 
             counter: 0,
             context_depth: 4,
@@ -306,7 +324,7 @@ impl App {
     ) -> Result<()> {
         let sender = self.sender.clone();
         let config = self.config.clone();
-
+        
         // spawn connection listener co-routine
         task::spawn(async move {
             let listener = match TcpListener::bind(config.listen.clone()).await {
@@ -322,6 +340,9 @@ impl App {
                     return;
                 }
             };
+            
+
+            sender.send(AppEvent::Listening).await.unwrap();
 
             loop {
                 match listener.accept().await {
@@ -334,7 +355,7 @@ impl App {
             }
         });
 
-        self.notification = Notification::info("Welcome to debug-tui press ? for help".to_string());
+        self.notifications.notify(Notification::notice("Welcome to debug-tui press ? for help".to_string()));
 
         loop {
             let event = self.receiver.recv().await;
@@ -347,7 +368,7 @@ impl App {
 
             if let Err(e) = self.handle_event(terminal, event).await {
                 self.active_dialog = None;
-                self.notification = Notification::error(e.to_string());
+                self.notifications.notify(Notification::error(e.to_string()));
                 continue;
             };
 
@@ -355,9 +376,11 @@ impl App {
                 return Ok(());
             }
 
+            self.channels.unload(self.history.offset).await;
+
             terminal.autoresize()?;
             terminal.draw(|frame| {
-                LayoutView::draw(self, frame, frame.area());
+                LayoutView::draw(self, frame, frame.area(), frame.area());
             })?;
         }
     }
@@ -374,8 +397,16 @@ impl App {
             _ => info!("Handling event {:?}", event),
         };
         match event {
-            AppEvent::Tick => (),
+            AppEvent::Tick => {
+                self.session_view.eval_state.tick();
+                self.notifications.tick();
+            },
             AppEvent::Quit => self.quit = true,
+            AppEvent::Listening => {
+                if let Some(script) = &self.config.cmd {
+                    self.php_tx.send(ProcessEvent::Start(script.to_vec())).await?;
+                }
+            },
             AppEvent::ChangeView(view) => {
                 self.view_current = view;
             }
@@ -426,17 +457,16 @@ impl App {
                 }
             }
             AppEvent::Listen => {
+                self.channels.reset();
                 self.listening_status = ListenStatus::Listening;
                 self.view_current = SelectedView::Listen;
                 self.session_view.mode = SessionViewMode::Current;
-                self.notification = Notification::info("listening for next connection".to_string())
             }
             AppEvent::ClientConnected(s) => {
                 if self.listening_status != ListenStatus::Listening {
-                    self.notification =
-                        Notification::warning("refused incoming connection".to_string());
+                    self.notifications.notify(Notification::warning("refused incoming connection".to_string())
+                    );
                 } else {
-                    self.notification = Notification::info("connected".to_string());
                     let filepath = {
                         let mut client = self.client.lock().await;
                         let response = client.deref_mut().connect(s).await?;
@@ -485,6 +515,7 @@ impl App {
             }
             AppEvent::ContextFilterOpen => {
                 self.session_view.context_filter.show = true;
+                self.session_view.goto_component_pane(crate::view::ComponentType::Context);
                 self.focus_view = true;
             }
             AppEvent::ContextSearchClose => {
@@ -533,6 +564,10 @@ impl App {
             AppEvent::Disconnect => {
                 let _ = self.client.lock().await.deref_mut().disonnect().await;
                 self.listening_status = ListenStatus::Refusing;
+
+                // capture any remaining stdout/stderr
+                self.channels.savepoint(self.history.offset).await;
+                self.focus_current_channel();
                 self.sender
                     .send(AppEvent::ChangeSessionViewMode(SessionViewMode::History))
                     .await?;
@@ -540,12 +575,36 @@ impl App {
             AppEvent::PushInputPlurality(char) => self.input_plurality.push(char),
             AppEvent::EvalStart => {
                 if !self.history.is_current() {
-                    self.notification =
-                        Notification::warning("Cannot eval in history mode".to_string());
+                    self.notifications.notify(
+                        Notification::warning("Cannot eval in history mode".to_string())
+                    );
                 } else {
                     self.active_dialog = Some(ActiveDialog::Eval);
                 }
             }
+            AppEvent::NextChannel => {
+                self.session_view.eval_state.channel = (self.session_view.eval_state.channel + 1) % self.channels.count().max(1);
+                self.focus_current_channel();
+            },
+            AppEvent::NotifyError(message) => {
+                self.notifications.notify(Notification::error(message));
+            },
+            AppEvent::Notify(notification) => {
+                self.notifications.notify(notification);
+            },
+            AppEvent::ChannelLog(channel, chunk) => {
+                let buffer = self.channels.get_mut(channel.as_str()).buffer.clone();
+                buffer.lock().await.push_str(&chunk);
+                self.session_view.eval_state.blink(&self.channels, &channel);
+            },
+            AppEvent::RestartProcess => {
+                self.sender.send(AppEvent::Disconnect).await?;
+                self.sender.send(AppEvent::Listen).await?;
+                self.php_tx.send(ProcessEvent::Stop).await?;
+                if let Some(cmd) = self.config.clone().cmd {
+                    self.php_tx.send(ProcessEvent::Start(cmd)).await?;
+                };
+            },
             AppEvent::EvalCancel => {
                 self.active_dialog = None;
             }
@@ -563,8 +622,26 @@ impl App {
                         )
                         .await?;
 
-                    self.session_view.eval_state.response = Some(response);
+                    let mut lines: Vec<String> = Vec::new();
+                    match response.error {
+                        Some(e) => {
+                            self.channels.get_mut("eval").writeln(
+                                format!("[{}] {}", e.code, e.message),
+                            ).await;
+                        },
+                        None => {
+                            draw_properties(
+                                response.properties.defined_properties(),
+                                &mut lines,
+                                0
+                            );
+                            self.channels.get_mut("eval").clear().await;
+                            self.channels.get_mut("eval").writeln(lines.join("\n")).await;
+                        }
+                    };
                     self.sender.send(AppEvent::Snapshot()).await.unwrap();
+                    self.focus_channel("eval".to_string(), true);
+                    self.session_view.goto_component_pane(crate::view::ComponentType::Eval);
                 }
                 self.active_dialog = None;
             }
@@ -575,20 +652,52 @@ impl App {
                     // event shandled exclusively by view (e.g. input needs focus)
                     self.send_event_to_current_view(event).await;
                 } else {
-                    // global events
-                    match key_event.code {
-                        KeyCode::Char('t') => {
-                            self.theme = self.theme.next();
-                            self.notification =
-                                Notification::info(format!("Switched to theme: {:?}", self.theme));
+                    let multiplier = if KeyModifiers::SHIFT == key_event.modifiers & KeyModifiers::SHIFT {
+                        10
+                    } else {
+                        1
+                    };
+
+                    let app_event = match key_event.code {
+                        KeyCode::Tab => Some(AppEvent::NextPane),
+                        KeyCode::BackTab => Some(AppEvent::PreviousPane),
+                        KeyCode::Enter => Some(AppEvent::ToggleFullscreen),
+                        KeyCode::Left => Some(AppEvent::Scroll((0, -multiplier))),
+                        KeyCode::Right => Some(AppEvent::Scroll((0, multiplier))),
+                        KeyCode::Up => Some(AppEvent::Scroll((-multiplier, 0))),
+                        KeyCode::Down => Some(AppEvent::Scroll((multiplier, 0))),
+                        KeyCode::Char(char) => match char {
+                            'e' => Some(AppEvent::EvalStart),
+                            'c' => Some(AppEvent::NextChannel),
+                            'j' => Some(AppEvent::Scroll((1, 0))),
+                            'k' => Some(AppEvent::Scroll((-1, 0))),
+                            'J' => Some(AppEvent::Scroll((10, 0))),
+                            'K' => Some(AppEvent::Scroll((-10, 0))),
+                            'l' => Some(AppEvent::Scroll((0, 1))),
+                            'L' => Some(AppEvent::Scroll((0, 10))),
+                            'h' => Some(AppEvent::Scroll((0, -1))),
+                            'H' => Some(AppEvent::Scroll((0, -10))),
+                            'f' => Some(AppEvent::ContextFilterOpen),
+                            '0'..='9' => Some(AppEvent::PushInputPlurality(char)),
+                            't' => {
+                                self.theme = self.theme.next();
+                                self.notifications.notify(
+                                    Notification::info(format!("Switched to theme: {:?}", self.theme))
+                                );
+                                None
+                            },
+                            '?' => Some(AppEvent::ChangeView(SelectedView::Help)),
+                            _ => None,
                         }
-                        KeyCode::Char('?') => {
-                            self.sender
-                                .send(AppEvent::ChangeView(SelectedView::Help))
-                                .await
-                                .unwrap();
-                        }
-                        _ => self.send_event_to_current_view(event).await,
+                        _ => None,
+                    };
+                    if let Some(app_event) = app_event {
+                        self.sender
+                            .send(app_event)
+                            .await
+                            .unwrap();
+                    } else {
+                        self.send_event_to_current_view(event).await;
                     }
                 }
             }
@@ -605,10 +714,19 @@ impl App {
         let sender = self.sender.clone();
         let count = self.take_motion();
 
+        // avoid bombing the spawned task and creating a deadlock
+        if let Some(run_abort) = &self.run_abort {
+            if !run_abort.is_finished() {
+                run_abort.abort();
+                self.run_abort = None;
+                return;
+            }
+        }
+
         let snapshot_notify = Arc::clone(&self.snapshot_notify);
         snapshot_notify.notify_one();
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let mut last_response: Option<ContinuationResponse> = None;
             for i in 0..count {
                 // we need to wait for the snapshot to complete before running a further
@@ -616,8 +734,8 @@ impl App {
                 snapshot_notify.notified().await;
 
                 info!("Running iteration {}/{}", i, count);
+                let mut instance = client.lock().await;
                 let response = {
-                    let mut instance = client.lock().await;
                     match event {
                         AppEvent::Run => instance.deref_mut().run().await,
                         AppEvent::StepOut => instance.deref_mut().step_out().await,
@@ -646,6 +764,7 @@ impl App {
                     }
                 };
             }
+
             if let Some(last_response) = last_response {
                 sender
                     .send(AppEvent::UpdateStatus(last_response.status))
@@ -653,6 +772,8 @@ impl App {
                     .unwrap();
             }
         });
+
+        self.run_abort = Some(handle.abort_handle());
     }
 
     async fn send_event_to_current_dialog(&mut self, event: AppEvent) {
@@ -696,23 +817,23 @@ impl App {
 
     /// capture the current status and push it onto the history stack
     pub async fn snapshot(&mut self) -> Result<()> {
-        let stack = { self.client.lock().await.deref_mut().get_stack().await? };
         let mut entry = HistoryEntry::new();
+
+        // for each stack frame fetch the context and analyse the source code
+        let stack = { self.client.lock().await.deref_mut().get_stack().await? };
         for (level, frame) in stack.entries.iter().enumerate() {
             let filename = &frame.filename;
             let line_no = frame.line;
-            let context = {
-                match (level as u16) < self.stack_max_context_fetch {
-                    true => Some(
-                        self.client
-                            .lock()
-                            .await
-                            .deref_mut()
-                            .context_get(level as u16)
-                            .await?,
-                    ),
-                    false => None,
-                }
+            let context = match (level as u16) < self.stack_max_context_fetch {
+                true => Some(
+                    self.client
+                        .lock()
+                        .await
+                        .deref_mut()
+                        .context_get(level as u16)
+                        .await?,
+                ),
+                false => None,
             };
 
             let document = self.workspace.open(filename.to_string()).await;
@@ -731,15 +852,14 @@ impl App {
             };
 
             let analysis = self.analyzed_files.get(&filename.clone());
-
             let stack = StackFrame {
                 level: (level as u16),
                 source,
                 context,
             };
 
+            // populate inline variables with values
             {
-                // populate inline variables with values
                 let mut vars = vec![];
                 if let Some(analysis) = analysis {
                     for (_, var) in analysis.row((line_no as usize).saturating_sub(1)) {
@@ -756,29 +876,9 @@ impl App {
             entry.push(stack);
         }
 
-        // *xdebug* only evalutes expressions on the current stack frame
-        let eval = if !self.session_view.eval_state.input.to_string().is_empty() {
-            let response = self
-                .client
-                .lock()
-                .await
-                .eval(
-                    self.session_view.eval_state.input.to_string(),
-                    self.session_view.stack_depth(),
-                )
-                .await?;
-
-                Some(EvalEntry{
-                    expr: self.session_view.eval_state.input.to_string(),
-                    response
-                })
-        } else {
-            None
-        };
-
-        entry.eval = eval;
         self.session_view.reset();
         self.history.push(entry);
+        self.channels.savepoint(self.history.offset).await;
         self.recenter();
         Ok(())
     }
@@ -811,6 +911,7 @@ impl App {
         self.session_view.mode = SessionViewMode::Current;
         self.analyzed_files = HashMap::new();
         self.workspace.reset();
+        self.channels.reset();
     }
 
     fn recenter(&mut self) {
@@ -818,6 +919,18 @@ impl App {
         if let Some(entry) = entry {
             self.session_view
                 .scroll_to_line(entry.source(self.session_view.stack_depth()).line_no)
+        }
+        self.focus_current_channel();
+    }
+
+    fn focus_current_channel(&mut self) {
+        if let Some(c) = self.channels.channel_by_offset(self.session_view.eval_state.channel) { self.focus_channel(c.name.clone(), true) }
+    }
+
+    fn focus_channel(&mut self, channel: String, blink: bool) {
+        self.session_view.eval_state.focus(&self.channels, &channel);
+        if blink {
+            self.session_view.eval_state.blink(&self.channels, &channel);
         }
     }
 }

@@ -18,6 +18,7 @@ use ratatui::text::Line;
 use ratatui::text::Span;
 use ratatui::widgets::Block;
 use ratatui::widgets::Paragraph;
+use ratatui::widgets::Wrap;
 use ratatui::Frame;
 
 pub struct LayoutView {}
@@ -27,7 +28,7 @@ impl View for LayoutView {
         None
     }
 
-    fn draw(app: &App, f: &mut Frame, area: Rect) {
+    fn draw(app: &App, f: &mut Frame, area: Rect, outer_area: Rect) {
         let constraints = vec![Constraint::Length(1), Constraint::Min(4)];
 
         let rows = Layout::default()
@@ -37,40 +38,57 @@ impl View for LayoutView {
 
         f.render_widget(Block::default().style(app.theme().background), area);
         f.render_widget(status_widget(app), rows[0]);
-        f.render_widget(notification_widget(app), rows[0]);
 
         match app.view_current {
-            SelectedView::Listen => ListenView::draw(app, f, rows[1]),
-            SelectedView::Session => SessionView::draw(app, f, rows[1]),
-            SelectedView::Help => HelpView::draw(app, f, rows[1]),
+            SelectedView::Listen => ListenView::draw(app, f, rows[1], rows[1]),
+            SelectedView::Session => SessionView::draw(app, f, rows[1], rows[1]),
+            SelectedView::Help => HelpView::draw(app, f, rows[1], rows[1]),
         }
 
         if let Some(dialog) = &app.active_dialog {
             match &dialog {
-                ActiveDialog::Eval => EvalDialog::draw(app, f, area),
+                ActiveDialog::Eval => EvalDialog::draw(app, f, area, rows[1]),
             }
         }
+
+        let notification_width = outer_area.width / 2;
+
+        f.render_widget(notification_widget(app), Rect{
+            x:rows[0].x + notification_width,
+            y:rows[0].y,
+            width:notification_width,
+            height: outer_area.height,
+        });
     }
 }
 
-fn notification_widget(app: &App) -> Paragraph<'_> {
-    Paragraph::new(vec![Line::from(Span::styled(
-        match app.notification.is_visible() {
-            true => format!(
-                "{} {}",
-                app.notification.message.clone(),
-                app.notification.countdown_char()
-            ),
-            false => "".to_string(),
-        },
-        match app.notification.level {
-            NotificationLevel::Error => app.theme().notification_error,
-            NotificationLevel::Warning => app.theme().notification_warning,
-            NotificationLevel::Info => app.theme().notification_info,
-            NotificationLevel::None => Style::default(),
-        },
-    ))
-    .alignment(ratatui::layout::Alignment::Right)])
+fn notification_widget<'a>(app: &'a App) -> Paragraph<'a> {
+    let notifications = app.notifications.current();
+    let mut lines = Vec::new();
+
+    for notification in notifications.iter() {
+        lines.push(Line::from(Span::styled(
+            match notification.is_visible() {
+                true => format!(
+                    " {} {} ",
+                    notification.message.clone(),
+                    notification.countdown_char()
+                ),
+                false => "".to_string(),
+            },
+            match notification.level {
+                NotificationLevel::Error => app.theme().notification_error,
+                NotificationLevel::Warning => app.theme().notification_warning,
+                NotificationLevel::Info => app.theme().notification_info,
+                NotificationLevel::Debug => app.theme().notification_debug,
+                NotificationLevel::Notice => app.theme().notification_notice,
+                NotificationLevel::None => Style::default(),
+            }.patch(app.theme().background),
+        )));
+    }
+
+    Paragraph::new(lines).wrap(Wrap{trim:false})
+        .alignment(ratatui::layout::Alignment::Right)
 }
 
 fn status_widget<'a>(app: &'a App) -> Paragraph<'a> {
@@ -124,6 +142,6 @@ fn status_widget<'a>(app: &'a App) -> Paragraph<'a> {
                 SessionViewMode::Current => app.theme().widget_mode_debug,
                 SessionViewMode::History => app.theme().widget_mode_history,
             },
-        ),
+        )
     ])])
 }

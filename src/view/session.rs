@@ -1,5 +1,5 @@
 use super::context::ContextComponent;
-use super::eval::EvalComponent;
+use super::eval::ChannelsComponent;
 use super::eval::EvalState;
 use super::source::SourceComponent;
 use super::stack::StackComponent;
@@ -10,8 +10,8 @@ use super::View;
 use crate::app::App;
 use crate::app::ListenStatus;
 use crate::event::input::AppEvent;
+use crate::notification::Notification;
 use crossterm::event::KeyCode;
-use crossterm::event::KeyModifiers;
 use ratatui::layout::Constraint;
 use ratatui::layout::Layout;
 use ratatui::layout::Rect;
@@ -35,58 +35,45 @@ impl View for SessionView {
             return delegate_event_to_pane(app, event);
         }
 
-        let multiplier = if KeyModifiers::SHIFT == input_event.modifiers & KeyModifiers::SHIFT {
-            10
-        } else {
-            1
-        };
-
-        // handle global session events
-        match input_event.code {
-            KeyCode::Tab => return Some(AppEvent::NextPane),
-            KeyCode::BackTab => return Some(AppEvent::PreviousPane),
-            KeyCode::Enter => return Some(AppEvent::ToggleFullscreen),
-            KeyCode::Left => return Some(AppEvent::Scroll((0, -multiplier))),
-            KeyCode::Right => return Some(AppEvent::Scroll((0, multiplier))),
-            KeyCode::Up => return Some(AppEvent::Scroll((-multiplier, 0))),
-            KeyCode::Down => return Some(AppEvent::Scroll((multiplier, 0))),
-            KeyCode::Char(char) => match char {
-                'e' => return Some(AppEvent::EvalStart),
-                'j' => return Some(AppEvent::Scroll((1, 0))),
-                'k' => return Some(AppEvent::Scroll((-1, 0))),
-                'J' => return Some(AppEvent::Scroll((10, 0))),
-                'K' => return Some(AppEvent::Scroll((-10, 0))),
-                'l' => return Some(AppEvent::Scroll((0, 1))),
-                'L' => return Some(AppEvent::Scroll((0, 10))),
-                'h' => return Some(AppEvent::Scroll((0, -1))),
-                'H' => return Some(AppEvent::Scroll((0, -10))),
-                '0'..='9' => return Some(AppEvent::PushInputPlurality(char)),
-                _ => (),
-            },
-            _ => (),
-        };
-
         let next_event: Option<AppEvent> = match app.session_view.mode {
-            SessionViewMode::Current => match input_event.code {
-                KeyCode::Char(char) => match char {
-                    '+' => Some(AppEvent::ContextDepth(1)),
-                    '-' => Some(AppEvent::ContextDepth(-1)),
-                    'r' => Some(AppEvent::Run),
-                    'n' => Some(AppEvent::StepInto),
-                    'N' => Some(AppEvent::StepOver),
-                    'o' => Some(AppEvent::StepOut),
-                    'p' => Some(AppEvent::ChangeSessionViewMode(SessionViewMode::History)),
-                    'd' => Some(AppEvent::Disconnect),
+            SessionViewMode::Current => {
+                // actions that can be executed at any time
+                if let Some(opt) = match input_event.code {
+                    KeyCode::Char(char) => match char {
+                        '+' => Some(AppEvent::ContextDepth(1)),
+                        '-' => Some(AppEvent::ContextDepth(-1)),
+                        'p' => Some(AppEvent::ChangeSessionViewMode(SessionViewMode::History)),
+                        _ => None,
+                    },
                     _ => None,
-                },
-                _ => None,
+                } {
+                    return Some(opt);
+                }
+
+                if app.client.try_lock().is_err() {
+                    app.notifications.notify(Notification::error("Xdebug client is busy".to_string()));
+                    return None;
+                };
+
+                // actions that can only be executed when xdebug client is not busy
+                match input_event.code {
+                    KeyCode::Char(char) => match char {
+                        'r' => Some(AppEvent::Run),
+                        'n' => Some(AppEvent::StepInto),
+                        'N' => Some(AppEvent::StepOver),
+                        'o' => Some(AppEvent::StepOut),
+                        'd' => Some(AppEvent::Disconnect),
+                        'R' => Some(AppEvent::RestartProcess),
+                        _ => None,
+                    },
+                    _ => None,
+                }
             },
             SessionViewMode::History => match input_event.code {
                 KeyCode::Esc => escape(app),
                 KeyCode::Char(c) => match c {
                     'n' => Some(AppEvent::HistoryNext),
                     'p' => Some(AppEvent::HistoryPrevious),
-                    'd' => Some(AppEvent::Disconnect),
                     'b' => escape(app),
                     _ => None,
                 },
@@ -101,7 +88,7 @@ impl View for SessionView {
         delegate_event_to_pane(app, event)
     }
 
-    fn draw(app: &App, frame: &mut Frame, area: ratatui::prelude::Rect) {
+    fn draw(app: &App, frame: &mut Frame, area: ratatui::prelude::Rect, _outer_area: Rect) {
         if app.session_view.full_screen {
             build_pane_widget(
                 frame,
@@ -162,7 +149,7 @@ fn delegate_event_to_pane(app: &mut App, event: AppEvent) -> Option<AppEvent> {
         ComponentType::Source => SourceComponent::handle(app, event),
         ComponentType::Context => ContextComponent::handle(app, event),
         ComponentType::Stack => StackComponent::handle(app, event),
-        ComponentType::Eval => EvalComponent::handle(app, event),
+        ComponentType::Eval => ChannelsComponent::handle(app, event),
     }
 }
 
@@ -196,12 +183,13 @@ fn build_pane_widget(frame: &mut Frame, app: &App, pane: &Pane, area: Rect, inde
             ),
             ComponentType::Eval => match app.history.current() {
                 Some(entry) => format!(
-                    "Eval: {}",
+                    "Eval: {} {}",
                     if let Some(eval) = &entry.eval {
                         eval.expr.clone()
                     } else {
                         "Press 'e' to enter an expression".to_string()
-                    }
+                    },
+                    ", 'c' to change channel",
                 ),
                 None => "".to_string(),
             },
@@ -216,16 +204,16 @@ fn build_pane_widget(frame: &mut Frame, app: &App, pane: &Pane, area: Rect, inde
 
     match pane.component_type {
         ComponentType::Source => {
-            SourceComponent::draw(app, frame, block.inner(area));
+            SourceComponent::draw(app, frame, block.inner(area), area);
         }
         ComponentType::Context => {
-            ContextComponent::draw(app, frame, block.inner(area));
+            ContextComponent::draw(app, frame, block.inner(area),  area);
         }
         ComponentType::Stack => {
-            StackComponent::draw(app, frame, block.inner(area));
+            StackComponent::draw(app, frame, block.inner(area), area);
         }
         ComponentType::Eval => {
-            EvalComponent::draw(app, frame, block.inner(area));
+            ChannelsComponent::draw(app, frame, block.inner(area), area);
         }
     };
 }
@@ -300,6 +288,14 @@ impl SessionViewState {
 
     fn panes(&self, col: Col) -> Vec<&Pane> {
         self.panes.iter().filter(|p| p.col == col).collect()
+    }
+
+    pub fn goto_component_pane(&mut self, type_: ComponentType) {
+        for (i, pane) in self.panes.iter().enumerate() {
+            if type_ == pane.component_type {
+                self.current_pane = i;
+            }
+        }
     }
 
     pub fn next_pane(&mut self) {

@@ -22,7 +22,7 @@ impl View for SourceComponent {
         }
     }
 
-    fn draw(app: &App, frame: &mut Frame, area: Rect) {
+    fn draw(app: &App, frame: &mut Frame, area: Rect, _outer_area: Rect) {
         let history_entry = match app.history.current() {
             Some(s) => s,
             None => return,
@@ -70,7 +70,7 @@ impl View for SourceComponent {
             {
                 // record annotations to add at the end of the line
                 let mut labels = vec![Span::raw("// ")];
-                for var in app.document_variables.get(&stack.source.filename, line_no as u32).iter() {
+                for var in app.document_variables.get(&stack.source.filename, line_no as u32).iter().rev() {
                     match render_label(&var.value) {
                         Some(label) => labels.push(Span::raw(label)),
                         None => continue,
