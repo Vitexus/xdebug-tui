@@ -7,7 +7,7 @@ Interactive [Xdebug](https://xdebug.org) step-debugging client for your terminal
 
 - **Travel forwards**: step over, into and out.
 - **Travel backwards**: it's not quite time travel - but you can revisit
-  previous steps in _history mode_.
+  and inspect previous steps in _history mode_.
 - **Jump the stack**: jump up and down the stack.
 - **Vim-like motions**: Typing `100n` will repeat "step into" 100 times.
 - **Inline values**: Show variable values inline with the source code.
@@ -23,15 +23,7 @@ Interactive [Xdebug](https://xdebug.org) step-debugging client for your terminal
 - `--log`: Debug log to file.
 - `--listen`: Listen on an alternative address (defaults to `0.0.0.0:9003`).
 
-## Usage
-
-To listen for an incoming Xdebug connection on the default port:
-
-```bash
-$ debug-tui 
-```
-
-Launch and manage the process to be debugged:
+In addition you can optionally specify a process to debug:
 
 ```bash
 $ debug-tui -- php path/to/script.php
@@ -42,11 +34,11 @@ $ debug-tui -- php path/to/script.php
 Prefix with number to repeat:
 
 - `r`     run
-- `R`     restart process if one was provided
 - `n`     next / step into
 - `N`     step over
 - `p`     previous (switches to history mode if in current mode)
 - `o`     step out
+- `R`     restart process if one was provided
 - `j`     down
 - `J`     down 10
 - `k`     up

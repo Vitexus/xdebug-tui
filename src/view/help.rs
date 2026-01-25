@@ -35,12 +35,12 @@ Help for you - press any key to return.
 Key mappings (prefix with number to repeat):
 
 [r]     run
-[R]     restart php script (if provided)
 [n]     next / step into
 [N]     step over
 [p]     previous (switches to history mode if in current mode)
 [o]     step out
 [d]     disconnect
+[R]     restart php script (if provided)
 [e]     enter an expression
 [j]     scroll down
 [J]     scroll down 10
