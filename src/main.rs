@@ -23,6 +23,7 @@ use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
+    let config = load_config();
     let stdout = io::stdout();
     let backend = CrosstermBackend::new(stdout);
     let mut terminal: Terminal<CrosstermBackend<io::Stdout>> = Terminal::new(backend)?;
@@ -33,7 +34,6 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // start input thread
     input::start(event_sender.clone());
-    let config = load_config();
     if let Some(log_path) = &config.log_path {
         if let Err(err) = simple_logging::log_to_file(log_path, log::LevelFilter::Trace) {
             anyhow::bail!(err);

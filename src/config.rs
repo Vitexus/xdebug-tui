@@ -1,7 +1,7 @@
 use clap::Parser;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(author = "Daniel Leech", version = "0.3.0", about = "Step-debugging TUI for PHP\'s Xdebug", long_about = None)]
 struct Args {
     #[arg(last = true)]
     pub php_script: Option<Vec<String>>,
