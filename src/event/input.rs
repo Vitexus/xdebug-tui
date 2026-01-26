@@ -73,7 +73,7 @@ pub fn start(event_sender: EventSender) {
     task::spawn(async move {
         sender.send(AppEvent::Startup).await.unwrap();
         let mut reader = EventStream::new();
-        let mut tick_interval = tokio::time::interval(Duration::from_millis(10));
+        let mut tick_interval = tokio::time::interval(Duration::from_millis(500));
         loop {
             let tick = tick_interval.tick().fuse();
             let event = reader.next().fuse();
