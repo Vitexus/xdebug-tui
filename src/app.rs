@@ -609,6 +609,11 @@ impl App {
                 self.active_dialog = None;
             }
             AppEvent::EvalExecute => {
+                if self.is_client_busy() {
+                    self.notifications.notify(Notification::error("Xdebug client is busy - cannot evaluate".to_string()));
+                    return Ok(());
+                };
+
                 if self.session_view.eval_state.input.to_string().is_empty() {
                     self.session_view.eval_state.response = None;
                 } else {
@@ -707,9 +712,18 @@ impl App {
         Ok(())
     }
 
+    fn is_client_busy(&self) -> bool {
+        return self.client.try_lock().is_err();
+    }
+
     // generically handle "continuation" events and update the
     // application state accordingly.
     async fn exec_continuation(&mut self, event: AppEvent) {
+        if self.is_client_busy() {
+            self.notifications.notify(Notification::error("Xdebug client is busy".to_string()));
+            return;
+        };
+
         let client = Arc::clone(&self.client);
         let sender = self.sender.clone();
         let count = self.take_motion();

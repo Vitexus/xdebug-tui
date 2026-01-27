@@ -1,6 +1,14 @@
 CHANGELOG
 =========
 
+0.3.1
+-----
+
+Bug fixes:
+
+- Restore tick-rate to 500ms (it was set to 10ms in the previous release
+  causing performance issues).
+
 0.3.0
 -----
 

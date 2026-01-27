@@ -83,7 +83,6 @@ impl View for ContextComponent {
             &mut 0
         );
 
-
         frame.render_widget(
             Paragraph::new(lines.clone()).scroll((0, app.session_view.context_scroll.1)),
             areas[1],
