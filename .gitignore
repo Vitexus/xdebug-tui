@@ -1,3 +1,11 @@
 /target
 /debug.log
 /test.log
+
+# Debian build artifacts
+debian/.debhelper/
+debian/cargo_home/
+debian/debhelper-build-stamp
+debian/files
+debian/xdebug-tui.substvars
+debian/xdebug-tui/

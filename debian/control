@@ -1,0 +1,29 @@
+Source: xdebug-tui
+Section: devel
+Priority: optional
+Maintainer: Vítězslav Dvořák <info@vitexsoftware.cz>
+Build-Depends:
+ debhelper-compat (= 13),
+ cargo,
+ rustc,
+ libstdc++-dev,
+ pkg-config,
+Standards-Version: 4.7.0
+Homepage: https://github.com/dantleech/debug-tui
+Rules-Requires-Root: no
+Vcs-Git: https://github.com/Vitexus/xdebug-tui.git
+Vcs-Browser: https://github.com/Vitexus/xdebug-tui
+
+Package: xdebug-tui
+Architecture: any
+Multi-Arch: foreign
+Depends:
+ ${misc:Depends},
+ ${shlibs:Depends},
+Description: Interactive Xdebug step-debugging client for the terminal
+ debug-tui is a terminal-based interactive step-debugging client for
+ PHP's Xdebug extension. It provides a TUI (Text User Interface) with
+ features including step-over/into/out navigation, history mode to
+ revisit previous steps, stack frame jumping, Vim-like motions, inline
+ variable values display, and process control for launching and
+ restarting debugged processes.

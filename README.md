@@ -17,6 +17,13 @@ Interactive [Xdebug](https://xdebug.org) step-debugging client for your terminal
 
 - Download the [latest release](https://github.com/dantleech/debug-tui/releases/latest).
 - Compile it yourself `cargo build`.
+- Install the Debian package: `sudo dpkg -i xdebug-tui_*.deb`
+
+### Building the Debian package
+
+```bash
+dpkg-buildpackage -us -uc -b
+```
 
 ## CLI options
 
